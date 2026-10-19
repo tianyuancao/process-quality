@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+secom.code-workspace
+
+# dbt
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# credentials — never commit
+profiles.yml
+*.p8
+*.pem
+.env
+
+# raw data (downloadable from UCI)
+analysis/data/
+
+.vscode/
+
+# local scratch — kept on disk, not published
+analysis/test.py
+analysis/foldtest.py
+analysis/control_charts_2.py
+analysis/changepoint_plot

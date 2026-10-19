@@ -1,0 +1,24 @@
+version: 2
+models:
+  - name: stg_secom
+    columns:
+      - name: wafer_id
+        tests: [unique, not_null]
+      - name: is_fail
+        tests:
+          - accepted_values: {values: [0, 1]}
+      - name: measured_at
+        tests: [not_null]
+  
+  - name: stg_secom_features
+    description: >
+      Kept sensors with nulls preserved for Python-side imputation.
+      Chronologically ordered for time-based train/test splitting.
+    columns:
+      - name: wafer_id
+        tests: [unique, not_null]
+      - name: measured_at
+        tests: [not_null]
+      - name: is_fail
+        tests:
+          - accepted_values: {values: [0, 1]}

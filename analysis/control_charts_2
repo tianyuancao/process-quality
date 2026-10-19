@@ -1,0 +1,118 @@
+"""I-MR control charts on the top univariate sensors.
+
+Phase I limits from an early in-control window; Phase II monitors forward.
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+from snow import query
+
+D2, D4 = 1.128, 3.267      # constants for moving range of n=2
+PHASE1_FRAC = 0.30
+
+Path("out/charts").mkdir(parents=True, exist_ok=True)
+
+df = query("""
+    SELECT wafer_id, measured_at, is_fail,
+           sensor_060, sensor_248, sensor_520, sensor_104, sensor_511
+    FROM SECOM.DBT_SCHEMA.STG_SECOM_FEATURES
+    ORDER BY measured_at
+""")
+df.columns = [c.lower() for c in df.columns]
+
+
+def imr_limits(x):
+    """Control limits from a Phase I reference window."""
+    x = pd.Series(x).dropna()
+    mr = x.diff().abs().dropna()
+    mrbar, xbar = mr.mean(), x.mean()
+    sigma = mrbar / D2
+    return {
+        "center": xbar,
+        "ucl": xbar + 3 * sigma,
+        "lcl": xbar - 3 * sigma,
+        "sigma": sigma,
+        "mr_center": mrbar,
+        "mr_ucl": D4 * mrbar,
+    }
+
+
+def nelson(x, lim):
+    """Nelson rules 1-4. Returns a boolean frame indexed like x."""
+    c, s = lim["center"], lim["sigma"]
+    above = x > c
+    out = pd.DataFrame(index=x.index)
+
+    out["r1_beyond_3s"] = (x - c).abs() > 3 * s
+
+    # rule 2: nine consecutive points on one side
+    run = above.ne(above.shift()).cumsum()
+    out["r2_run_of_9"] = above.groupby(run).transform("size").ge(9) & x.notna()
+
+    # rule 3: six consecutive increasing or decreasing
+    d = np.sign(x.diff())
+    grp = d.ne(d.shift()).cumsum()
+    out["r3_trend_of_6"] = d.groupby(grp).transform("size").ge(6) & d.ne(0)
+
+    # rule 4: two of three consecutive beyond 2 sigma, same side
+    beyond2 = ((x - c).abs() > 2 * s) & above.notna()
+    same = (beyond2 & above).rolling(3).sum().ge(2) | \
+           (beyond2 & ~above).rolling(3).sum().ge(2)
+    out["r4_2of3_beyond_2s"] = same.fillna(False)
+
+    return out.fillna(False)
+
+
+sensors = [c for c in df.columns if c.startswith("sensor_")]
+summary = []
+
+for col in sensors:
+    x = df[col]
+    cut = int(len(df) * PHASE1_FRAC)
+    lim = imr_limits(x.iloc[:cut])            # Phase I only
+    flags = nelson(x, lim)
+    viol = flags.any(axis=1)
+
+    # does violating the chart associate with failing?
+    rate_viol = df.loc[viol, "is_fail"].mean()
+    rate_ok = df.loc[~viol, "is_fail"].mean()
+    summary.append({
+        "sensor": col,
+        "n_violations": int(viol.sum()),
+        "fail_rate_violating": rate_viol,
+        "fail_rate_clean": rate_ok,
+        "lift": rate_viol / rate_ok if rate_ok else np.nan,
+    })
+
+    fig, ax = plt.subplots(2, 1, figsize=(13, 6), sharex=True,
+                           gridspec_kw={"height_ratios": [2, 1]})
+
+    ax[0].plot(df.measured_at, x, lw=0.7, color="#444")
+    ax[0].scatter(df.measured_at[viol], x[viol], s=18, color="crimson",
+                  zorder=3, label="Nelson violation")
+    for k, style in [("center", "-"), ("ucl", "--"), ("lcl", "--")]:
+        ax[0].axhline(lim[k], ls=style, lw=0.9, color="steelblue")
+    ax[0].axvline(df.measured_at.iloc[cut], color="green", ls=":",
+                  label="Phase I / II")
+    ax[0].scatter(df.measured_at[df.is_fail == 1],
+                  [ax[0].get_ylim()[0]] * int(df.is_fail.sum()),
+                  marker="|", color="orange", s=40, label="failed wafer")
+    ax[0].set_title(f"{col.upper()} — Individuals chart")
+    ax[0].legend(fontsize=8, loc="upper right")
+
+    mr = x.diff().abs()
+    ax[1].plot(df.measured_at, mr, lw=0.7, color="#444")
+    ax[1].axhline(lim["mr_center"], lw=0.9, color="steelblue")
+    ax[1].axhline(lim["mr_ucl"], ls="--", lw=0.9, color="steelblue")
+    ax[1].set_title("Moving range")
+
+    fig.tight_layout()
+    fig.savefig(f"out/charts/imr_{col}.png", dpi=130)
+    plt.close(fig)
+
+res = pd.DataFrame(summary).round(4)
+print(res.to_string(index=False))
+res.to_csv("out/control_chart_summary.csv", index=False)
+print("\ncharts written to out/charts/")

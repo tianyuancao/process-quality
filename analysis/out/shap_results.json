@@ -1,0 +1,9 @@
+{
+  "post_regime_n": 1234,
+  "post_regime_fails": 56,
+  "cv_pr_auc": 0.1327788065456825,
+  "cv_std": 0.08927193229133681,
+  "test_pr_auc": 0.07291117678043599,
+  "no_skill": 0.0425531914893617,
+  "spearman_shap_vs_univariate": -0.05615384615384616
+}
